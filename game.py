@@ -32,6 +32,9 @@ class Game:
     def press_up(self):
         self._driver.find_element_by_tag_name("body").send_keys(Keys.ARROW_UP)
 
+    def press_down(self):
+        self._driver.find_element_by_tag_name("body").send_keys(Keys.ARROW_DOWN)
+
     def get_score(self):
         score_array = self._driver.execute_script("return Runner.instance_.distanceMeter.digits")
         score = ''.join(score_array)
@@ -45,4 +48,23 @@ class Game:
 
     def end(self):
         self._driver.close()
+
+
+class DinoAgent:
+    def __init__(self, game):
+        self._game = game
+        self.jump() # to start the game we have to jump once
+        time.sleep(.5)
+
+    def is_running(self):
+        return self._game.get_playing()
+
+    def is_crashed(self):
+        return self._game.get_crashed()
+
+    def jump(self):
+        self._game.press_up()
+
+    def duck(self):
+        self._game.press_down()
 
