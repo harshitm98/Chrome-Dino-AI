@@ -5,9 +5,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 import numpy as np
 import pandas as pd
-from PIL import ImageGrab #grabbing image
-from PIL import Image
-import cv2 #opencv
+import pyscreenshot as ImageGrab #grabbing image
+import cv2
 from keras.models import model_from_json
 from keras.models import Sequential
 from keras.layers.core import Dense, Dropout, Activation, Flatten
@@ -24,7 +23,7 @@ class Game:
     def __init__(self, custom_config=True):
         chrome_options = Options()
         chrome_options.add_argument("disable-infobars")
-        self._driver = webdriver.Chrome(chrome_options=chrome_options)
+        self._driver = webdriver.Chrome('/usr/local/bin/chromedriver', chrome_options=chrome_options)
         self._driver.set_window_position(-10, 0)
         self._driver.set_window_size(200, 300)
         self._driver.get(os.path.abspath("game/dino.html"))
@@ -99,6 +98,7 @@ class GameState:
             self._game.restart()
             reward = -11/score
             is_over = True
+        return image, reward, is_over
 
 
 def grab_screen(_driver = None):
@@ -118,10 +118,17 @@ LEARNING_RATE = 1e-4
 img_rows, img_cols = 40, 20
 img_channels = 4
 ACTIONS = 2
+OBSERVATION = 50000
+INITIAL_EPSILON = 0.1
+FINAL_EPSILON = 0.0001
+EXPLORE = 100000
+REPLAY_MEMORY = 50000
+BATCH = 32
+GAMMA = 0.99
 
 
 def build_model():
-    print("Now we build the model")
+    print("Building model")
     model = Sequential()
     model.add(Conv2D(32, (8, 8), strides=(4, 4), padding='same', input_shape=(img_cols, img_rows, img_channels)))  # 20*40*4
     model.add(Activation('relu'))
@@ -135,7 +142,89 @@ def build_model():
     model.add(Dense(ACTIONS))
     adam = Adam(lr=LEARNING_RATE)
     model.compile(loss='mse', optimizer=adam)
-    print("We finish building the model")
+    print("Model built")
     return model
 
 
+def train_network(model, game_state):
+    D = deque()
+    do_nothing = np.zeros(ACTIONS)
+    do_nothing[0] = 1
+    x_t, r_0, terminal = game_state.get_state(do_nothing)
+    s_t = np.stack((x_t, x_t, x_t, x_t), axis=2).reshape(1, 20, 40, 4)
+    OBSERVE = OBSERVATION
+    epsilon = INITIAL_EPSILON
+    t = 0
+    initial_state = s_t
+    while True:
+        loss = 0
+        Q_sa = 0
+        action_index = 0
+        r_t = 0
+        a_t = np.zeros([ACTIONS])
+        if random.random() <= epsilon:
+            print("---Random Action---")
+            action_index = random.randrange(ACTIONS)
+            a_t[action_index] = 1
+        else:
+            q = model.predict(s_t)
+            max_Q = np.argmax(q)
+            action_index = max_Q
+            a_t[action_index] = 1
+
+        if epsilon > FINAL_EPSILON and t > OBSERVE:
+            epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+
+        x_t1, r_t, terminal = game_state.get_state(a_t)
+        last_time = time.time()
+        x_t1 = x_t1.reshape(1, x_t1.shape[0], x_t1.shape[1], 1)
+        s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3)
+
+        D.append((s_t, action_index, r_t, s_t1, terminal))
+        if len(D) > REPLAY_MEMORY:
+            D.popleft()
+        if t > OBSERVE:
+            # Replay Memory
+            minibatch = random.sample(D, BATCH)
+            inputs = np.zeros((BATCH, s_t.shape[1], s_t.shape[2], s_t.shape[3]))  # 32, 20, 40, 4
+            targets = np.zeros((inputs.shape[0], ACTIONS))  # 32, 2
+
+            for i in range(0, len(minibatch)):
+                state_t = minibatch[i][0]
+                action_t = minibatch[i][1]
+                reward_t = minibatch[i][2]
+                state_t1 = minibatch[i][3]
+                terminal = minibatch[i][4]
+                inputs[i:i+1] = state_t
+                targets[i] = model.predict(state_t)
+                Q_sa = model.predict(state_t1)
+                if terminal:
+                    targets[i, action_t] = reward_t
+                else:
+                    targets[i, action_t] = reward_t + GAMMA*np.max(Q_sa)
+                loss += model.train_on_batch(inputs, targets)
+        else:
+            time.sleep(0.12)
+        s_t = initial_state if terminal else s_t1
+        t = t + 1
+        print("Timestep: {}\tEpsilon: {}\tAction: {}\tReward: {}\tQ_max: {}\tLoss:\t{}".format(t, epsilon, action_index,
+                                                                                               r_t, np.max(Q_sa), loss))
+        if t % 1000 == 0:
+            print("Saving model...")
+            model.save_weights("model_final.h5", overwrite=True)
+            with open("model.json", "w") as outfile:
+                json.dump(model.to_json(), outfile)
+
+
+def play_game(observe=False):
+    game = Game()
+    dino = DinoAgent(game)
+    game_state = GameState(dino, game)
+    model = build_model()
+    try:
+        train_network(model,game_state, observe=observe)
+    except StopIteration:
+        game.end()
+
+
+play_game(observe=True)
