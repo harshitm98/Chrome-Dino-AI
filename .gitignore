@@ -2,3 +2,5 @@
 venv/bin/
 
 venv/
+
+chromedriver

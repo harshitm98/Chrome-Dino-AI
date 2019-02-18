@@ -23,10 +23,10 @@ class Game:
     def __init__(self, custom_config=True):
         chrome_options = Options()
         chrome_options.add_argument("disable-infobars")
-        self._driver = webdriver.Chrome('/usr/local/bin/chromedriver', chrome_options=chrome_options)
-        self._driver.set_window_position(-10, 0)
+        self._driver = webdriver.Chrome("/home/fake_batman_/PycharmProjects/Chrome-Dino-AI/chromedriver", chrome_options=chrome_options)
         self._driver.set_window_size(200, 300)
-        self._driver.get(os.path.abspath("game/dino.html"))
+        self._driver.set_window_position(-10, 0)
+        self._driver.get("file:///home/fake_batman_/PycharmProjects/Chrome-Dino-AI/game/dino.html")
         if custom_config:
             self._driver.execute_script("Runner.config.ACCELERATION=0")
 
@@ -83,9 +83,12 @@ class DinoAgent:
 class GameState:
     def __init__(self, agent, game):
         self._game = game
-        self_agent = agent
+        self._agent = agent
+        self._display = show_img()
+        self._display.__next__()
 
     def get_state(self, actions):
+        actions_df.loc[len(actions_df)] = actions[1]
         score = self._game.get_score()
         reward = 0.1*score/10
         is_over = False
@@ -95,13 +98,14 @@ class GameState:
         image = grab_screen()
 
         if self._agent.is_crashed():
+            scores_df.loc[len(loss_df)] = score
             self._game.restart()
             reward = -11/score
             is_over = True
         return image, reward, is_over
 
 
-def grab_screen(_driver = None):
+def grab_screen(_driver=None):
     screen = np.array(ImageGrab.grab(bbox=(40, 180, 440, 400)))
     image = process_img(screen)
     return image
@@ -114,6 +118,34 @@ def process_img(image):
     return image
 
 
+def save_obj(obj, name):
+    with open('objects/' + name + '.pkl', 'wb+') as file:
+        pickle.dump(obj, file, pickle.HIGHEST_PROTOCOL)
+
+
+def load_obj(name):
+    with open('objects/' + name + '.pkl', 'rb') as file:
+        return pickle.load(file)
+
+
+def show_img(graphs=False):
+    while True:
+        screen = (yield)
+        window_title = "logs" if graphs else "game_play"
+        cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
+        imS = cv2.resize(screen, (800, 400))
+        cv2.imshow(window_title, screen)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            cv2.destroyAllWindows()
+            break
+
+
+loss_file_path = "./objects/loss_df.csv"
+actions_file_path = "./objects/actions_df.csv"
+scores_file_path = "./objects/scores_df.csv"
+loss_df = pd.read_csv(loss_file_path) if os.path.isfile(loss_file_path) else pd.DataFrame(columns=['loss'])
+scores_df = pd.read_csv(scores_file_path) if os.path.isfile(loss_file_path) else pd.DataFrame(columns=['scores'])
+actions_df = pd.read_csv(actions_file_path) if os.path.isfile(actions_file_path) else pd.DataFrame(columns=['actions'])
 LEARNING_RATE = 1e-4
 img_rows, img_cols = 40, 20
 img_channels = 4
@@ -125,6 +157,15 @@ EXPLORE = 100000
 REPLAY_MEMORY = 50000
 BATCH = 32
 GAMMA = 0.99
+
+
+def init_cache():
+    """initial variable caching, done only once"""
+    save_obj(INITIAL_EPSILON, "epsilon")
+    t = 0
+    save_obj(t, "time")
+    D = deque()
+    save_obj(D, "D")
 
 
 def build_model():
@@ -147,14 +188,16 @@ def build_model():
 
 
 def train_network(model, game_state):
-    D = deque()
+    #D = deque()
+    D = load_obj("D")
     do_nothing = np.zeros(ACTIONS)
     do_nothing[0] = 1
     x_t, r_0, terminal = game_state.get_state(do_nothing)
     s_t = np.stack((x_t, x_t, x_t, x_t), axis=2).reshape(1, 20, 40, 4)
     OBSERVE = OBSERVATION
-    epsilon = INITIAL_EPSILON
-    t = 0
+    epsilon = load_obj("epsilon")
+    #epsilon = INITIAL_EPSILON
+    t = load_obj("time")
     initial_state = s_t
     while True:
         loss = 0
@@ -203,26 +246,34 @@ def train_network(model, game_state):
                 else:
                     targets[i, action_t] = reward_t + GAMMA*np.max(Q_sa)
                 loss += model.train_on_batch(inputs, targets)
+                loss_df.loc[len(loss_df)] = loss
         else:
             time.sleep(0.12)
         s_t = initial_state if terminal else s_t1
         t = t + 1
-        print("Timestep: {}\tEpsilon: {}\tAction: {}\tReward: {}\tQ_max: {}\tLoss:\t{}".format(t, epsilon, action_index,
-                                                                                               r_t, np.max(Q_sa), loss))
+        print("Timestep: {}\tEpsilon: {}\tAction: {}\tQ_max: {}\tLoss:\t{}\tReward: {}".format(t, epsilon, action_index,
+                                                                                               np.max(Q_sa), loss, r_t))
         if t % 1000 == 0:
             print("Saving model...")
             model.save_weights("model_final.h5", overwrite=True)
+            save_obj(D, "D")
+            save_obj(t, "time")
+            save_obj(epsilon, "epsilon")
+            loss_df.to_csv("objects/loss_df.csv", index=False)
+            scores_df.to_csv("objects/scores_df.csv", index=False)
+            actions_df.to_csv("objects/actions_df.csv", index=False)
             with open("model.json", "w") as outfile:
                 json.dump(model.to_json(), outfile)
 
 
 def play_game(observe=False):
+    #init_cache()
     game = Game()
     dino = DinoAgent(game)
     game_state = GameState(dino, game)
     model = build_model()
     try:
-        train_network(model,game_state, observe=observe)
+        train_network(model, game_state)
     except StopIteration:
         game.end()
 
