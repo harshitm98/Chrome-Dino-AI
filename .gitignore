@@ -4,3 +4,7 @@ venv/bin/
 venv/
 
 chromedriver
+
+objects/
+
+model_final\.h5

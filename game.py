@@ -188,7 +188,6 @@ def build_model():
 
 
 def train_network(model, game_state):
-    #D = deque()
     D = load_obj("D")
     do_nothing = np.zeros(ACTIONS)
     do_nothing[0] = 1
@@ -196,7 +195,6 @@ def train_network(model, game_state):
     s_t = np.stack((x_t, x_t, x_t, x_t), axis=2).reshape(1, 20, 40, 4)
     OBSERVE = OBSERVATION
     epsilon = load_obj("epsilon")
-    #epsilon = INITIAL_EPSILON
     t = load_obj("time")
     initial_state = s_t
     while True:
