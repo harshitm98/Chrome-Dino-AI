@@ -21,6 +21,7 @@ import json
 
 class Game:
     def __init__(self, custom_config=True):
+        # Opening Chrome to run the game
         chrome_options = Options()
         chrome_options.add_argument("disable-infobars")
         self._driver = webdriver.Chrome("/home/fake_batman_/PycharmProjects/Chrome-Dino-AI/chromedriver", chrome_options=chrome_options)
@@ -29,6 +30,8 @@ class Game:
         self._driver.get("file:///home/fake_batman_/PycharmProjects/Chrome-Dino-AI/game/dino.html")
         if custom_config:
             self._driver.execute_script("Runner.config.ACCELERATION=0")
+
+    # These are the functions that act as an interface between Python and JavaScript
 
     def get_crashed(self):
         return self._driver.execute_script("return Runner.instance_.crashed")
@@ -80,6 +83,7 @@ class DinoAgent:
         self._game.press_down()
 
 
+# For game environment
 class GameState:
     def __init__(self, agent, game):
         self._game = game
@@ -96,6 +100,7 @@ class GameState:
             self._agent.jump()
             reward = 0.1*reward/11
         image = grab_screen()
+        self._display.send(image)
 
         if self._agent.is_crashed():
             scores_df.loc[len(loss_df)] = score
@@ -159,8 +164,9 @@ BATCH = 32
 GAMMA = 0.99
 
 
+# Only done once, after that it is commented
+# PS: Could use a simple if-else to check if these objects exists.
 def init_cache():
-    """initial variable caching, done only once"""
     save_obj(INITIAL_EPSILON, "epsilon")
     t = 0
     save_obj(t, "time")
@@ -168,6 +174,7 @@ def init_cache():
     save_obj(D, "D")
 
 
+# Simple Model
 def build_model():
     print("Building model")
     model = Sequential()
@@ -191,37 +198,44 @@ def train_network(model, game_state):
     D = load_obj("D")
     do_nothing = np.zeros(ACTIONS)
     do_nothing[0] = 1
+    # get the first state by doing nothing
     x_t, r_0, terminal = game_state.get_state(do_nothing)
-    s_t = np.stack((x_t, x_t, x_t, x_t), axis=2).reshape(1, 20, 40, 4)
+    s_t = np.stack((x_t, x_t, x_t, x_t), axis=2).reshape(1, 20, 40, 4)  # stacking 4 images
+    # load observe, epsilon, timespace, model
     OBSERVE = OBSERVATION
     epsilon = load_obj("epsilon")
     t = load_obj("time")
+    model.load_weights("model_final.h5")
+    adam = Adam(lr=LEARNING_RATE)
+    model.compile(loss='mse', optimizer=adam)
+    # initial state is set to first state obtained by doing nothing
     initial_state = s_t
     while True:
+        # at t = 0
         loss = 0
         Q_sa = 0
         action_index = 0
         r_t = 0
         a_t = np.zeros([ACTIONS])
-        if random.random() <= epsilon:
-            print("---Random Action---")
-            action_index = random.randrange(ACTIONS)
-            a_t[action_index] = 1
-        else:
-            q = model.predict(s_t)
-            max_Q = np.argmax(q)
-            action_index = max_Q
-            a_t[action_index] = 1
+        if t % 1 == 0:
+            if random.random() <= epsilon:  # Exploring by doing random actions
+                print("---Random Action---")
+                action_index = random.randrange(ACTIONS)
+                a_t[action_index] = 1
+            else:
+                q = model.predict(s_t)  # Predict
+                max_Q = np.argmax(q)  # Choose the out of all the Q-values
+                action_index = max_Q
+                a_t[action_index] = 1
 
         if epsilon > FINAL_EPSILON and t > OBSERVE:
             epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
 
-        x_t1, r_t, terminal = game_state.get_state(a_t)
-        last_time = time.time()
+        x_t1, r_t, terminal = game_state.get_state(a_t)  # get the next state after performing action a_t
         x_t1 = x_t1.reshape(1, x_t1.shape[0], x_t1.shape[1], 1)
         s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3)
 
-        D.append((s_t, action_index, r_t, s_t1, terminal))
+        D.append((s_t, action_index, r_t, s_t1, terminal))  # Adding the state for replay memory
         if len(D) > REPLAY_MEMORY:
             D.popleft()
         if t > OBSERVE:
@@ -243,8 +257,8 @@ def train_network(model, game_state):
                     targets[i, action_t] = reward_t
                 else:
                     targets[i, action_t] = reward_t + GAMMA*np.max(Q_sa)
-                loss += model.train_on_batch(inputs, targets)
-                loss_df.loc[len(loss_df)] = loss
+            loss += model.train_on_batch(inputs, targets)
+            loss_df.loc[len(loss_df)] = loss
         else:
             time.sleep(0.12)
         s_t = initial_state if terminal else s_t1
@@ -265,7 +279,7 @@ def train_network(model, game_state):
 
 
 def play_game(observe=False):
-    #init_cache()
+    init_cache()
     game = Game()
     dino = DinoAgent(game)
     game_state = GameState(dino, game)
